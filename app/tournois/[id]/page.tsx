@@ -36,10 +36,19 @@ export default async function TournamentPage({ params }: { params: Promise<{ id:
         )}
       </div>
 
+      {tournament.is_public && (
+        <Link
+          href={`/t/${tournament.slug}`} target="_blank"
+          className="mt-2 inline-block text-xs text-ink-600 underline underline-offset-2"
+        >
+          Voir la page publique (à partager)
+        </Link>
+      )}
+
       {tournament.status === "draft" && isAdmin && (
         <Card className="mt-4">
           <p className="text-sm text-ink-900">
-            Le calendrier n'a pas encore été généré.
+            Le calendrier n&apos;a pas encore été généré.
           </p>
           <div className="mt-3 flex gap-2">
             <Link href={`/tournois/${id}/participants`} className="flex-1">
@@ -53,6 +62,9 @@ export default async function TournamentPage({ params }: { params: Promise<{ id:
       <div className="mt-5 flex gap-2 text-sm">
         <Link href={`/tournois/${id}/matchs`} className="rounded-full bg-pitch-100 px-3 py-1.5 font-medium text-pitch-900">
           Matchs
+        </Link>
+        <Link href={`/tournois/${id}/classement`} className="rounded-full px-3 py-1.5 text-ink-600">
+          Classement
         </Link>
         <Link href={`/tournois/${id}/participants`} className="rounded-full px-3 py-1.5 text-ink-600">
           Participants

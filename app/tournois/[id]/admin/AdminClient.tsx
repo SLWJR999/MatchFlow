@@ -62,59 +62,96 @@ export default function AdminClient({
           <EmptyState title="Rien à valider pour l'instant" />
         ) : (
           <div className="space-y-3">
-            {pending.map((m) => (
-              <Card key={m.id}>
-                <div className="flex items-center justify-between">
-                  <p className="text-sm font-medium text-ink-900">
-                    {m.home?.display_name} vs {m.away?.display_name}
-                  </p>
-                  <Badge tone={m.status === "disputed" ? "brick" : "gold"}>
-                    {m.status === "disputed" ? "Litige" : "Confirmé"}
-                  </Badge>
-                </div>
-                <p className="text-xs text-ink-600">{m.rounds?.name}</p>
-
-                {m.status === "confirmed" ? (
-                  <div className="mt-2 flex items-center justify-between">
-                    <span className="tabular-score font-semibold">{scoreLine(m.home_score, m.away_score)}</span>
-                    <Button
-                      disabled={busy === m.id}
-                      onClick={() => run(m.id, () => validateMatch(m.id, tournamentId))}
-                    >
-                      Valider
-                    </Button>
-                  </div>
-                ) : (
-                  <div className="mt-2 space-y-2">
-                    <div className="flex items-center gap-2">
-                      <input
-                        type="number" placeholder="Score dom." min={0}
-                        className="w-20 rounded-lg border border-line px-2 py-1.5 text-sm"
-                        value={disputeDraft[m.id]?.h ?? ""}
-                        onChange={(e) => setDisputeDraft((d) => ({ ...d, [m.id]: { h: e.target.value, a: d[m.id]?.a ?? "" } }))}
-                      />
-                      <span className="text-ink-600">—</span>
-                      <input
-                        type="number" placeholder="Score ext." min={0}
-                        className="w-20 rounded-lg border border-line px-2 py-1.5 text-sm"
-                        value={disputeDraft[m.id]?.a ?? ""}
-                        onChange={(e) => setDisputeDraft((d) => ({ ...d, [m.id]: { h: d[m.id]?.h ?? "", a: e.target.value } }))}
-                      />
+            {Object.entries(
+              pending.reduce<Record<string, typeof pending>>((acc, m) => {
+                (acc[m.round_id] ??= []).push(m);
+                return acc;
+              }, {}),
+            ).map(([roundId, roundMatches]) => {
+              const confirmedCount = roundMatches.filter((m) => m.status === "confirmed").length;
+              return (
+                <div key={roundId}>
+                  {confirmedCount > 1 && (
+                    <div className="mb-2 flex items-center justify-between">
+                      <span className="text-xs text-ink-600">
+                        {roundMatches[0].rounds?.name} · {confirmedCount} confirmés
+                      </span>
                       <Button
-                        disabled={busy === m.id}
-                        onClick={() => run(m.id, () => resolveDispute({
-                          matchId: m.id, tournamentId,
-                          homeScore: Number(disputeDraft[m.id]?.h ?? 0),
-                          awayScore: Number(disputeDraft[m.id]?.a ?? 0),
-                        }))}
+                        variant="secondary" disabled={busy === roundId}
+                        onClick={() => run(roundId, () => validateRound(roundId, tournamentId))}
                       >
-                        Trancher
+                        Tout valider
                       </Button>
                     </div>
+                  )}
+                  <div className="space-y-3">
+                    {roundMatches.map((m) => (
+                      <Card key={m.id}>
+                        <div className="flex items-center justify-between">
+                          <p className="text-sm font-medium text-ink-900">
+                            {m.home?.display_name} vs {m.away?.display_name}
+                          </p>
+                          <Badge tone={m.status === "disputed" ? "brick" : "gold"}>
+                            {m.status === "disputed" ? "Litige" : "Confirmé"}
+                          </Badge>
+                        </div>
+                        <p className="text-xs text-ink-600">{m.rounds?.name}</p>
+
+                        {m.status === "confirmed" ? (
+                          <div className="mt-2 flex items-center justify-between">
+                            <span className="tabular-score font-semibold">
+                              {scoreLine(m.home_score, m.away_score)}
+                            </span>
+                            <Button
+                              disabled={busy === m.id}
+                              onClick={() => run(m.id, () => validateMatch(m.id, tournamentId))}
+                            >
+                              Valider
+                            </Button>
+                          </div>
+                        ) : (
+                          <div className="mt-2 space-y-2">
+                            <div className="flex items-center gap-2">
+                              <input
+                                type="number" placeholder="Score dom." min={0}
+                                className="w-20 rounded-lg border border-line px-2 py-1.5 text-sm"
+                                value={disputeDraft[m.id]?.h ?? ""}
+                                onChange={(e) =>
+                                  setDisputeDraft((d) => ({
+                                    ...d, [m.id]: { h: e.target.value, a: d[m.id]?.a ?? "" },
+                                  }))
+                                }
+                              />
+                              <span className="text-ink-600">—</span>
+                              <input
+                                type="number" placeholder="Score ext." min={0}
+                                className="w-20 rounded-lg border border-line px-2 py-1.5 text-sm"
+                                value={disputeDraft[m.id]?.a ?? ""}
+                                onChange={(e) =>
+                                  setDisputeDraft((d) => ({
+                                    ...d, [m.id]: { h: d[m.id]?.h ?? "", a: e.target.value },
+                                  }))
+                                }
+                              />
+                              <Button
+                                disabled={busy === m.id}
+                                onClick={() => run(m.id, () => resolveDispute({
+                                  matchId: m.id, tournamentId,
+                                  homeScore: Number(disputeDraft[m.id]?.h ?? 0),
+                                  awayScore: Number(disputeDraft[m.id]?.a ?? 0),
+                                }))}
+                              >
+                                Trancher
+                              </Button>
+                            </div>
+                          </div>
+                        )}
+                      </Card>
+                    ))}
                   </div>
-                )}
-              </Card>
-            ))}
+                </div>
+              );
+            })}
           </div>
         )}
       </section>

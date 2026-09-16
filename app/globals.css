@@ -20,8 +20,8 @@
   --brick-600: #c1443b;
   --brick-100: #f6dedb;
 
-  --font-display: var(--font-space-grotesk);
-  --font-body: var(--font-inter);
+  --font-display: "Space Grotesk";
+  --font-body: "Inter";
 }
 
 @theme inline {

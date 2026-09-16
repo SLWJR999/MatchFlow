@@ -82,7 +82,7 @@ export default function MatchReportForm({
         </div>
 
         <label className="block text-sm text-ink-900">
-          Capture d'écran du score {requireScreenshot ? "" : "(optionnelle)"}
+          Capture d&apos;écran du score {requireScreenshot ? "" : "(optionnelle)"}
           <input
             type="file" accept="image/*" capture="environment"
             onChange={(e) => setFile(e.target.files?.[0] ?? null)}

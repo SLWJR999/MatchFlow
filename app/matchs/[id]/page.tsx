@@ -23,7 +23,12 @@ export default async function MatchPage({ params }: { params: Promise<{ id: stri
   const contact = opponent ? await getContact(opponent.id) : null;
 
   const myReport = reports.find((r) => r.participant_id === myParticipantId);
-  const opponentReport = reports.find((r) => r.participant_id === opponent?.id);
+  // Le rapport individuel de l'adversaire reste invisible côté RLS tant que
+  // je n'ai pas saisi le mien (c'est voulu, ça évite qu'on recopie).
+  // Le statut du match, lui, est public : "reported"/"confirmed"/"disputed"
+  // suffit à savoir qu'il a joué son coup, sans révéler son score.
+  const opponentHasReported =
+    !myReport && ["reported", "confirmed", "disputed"].includes(match.status);
 
   const canReport = myParticipantId && ["scheduled", "reported", "confirmed", "disputed"].includes(match.status);
 
@@ -66,7 +71,7 @@ export default async function MatchPage({ params }: { params: Promise<{ id: stri
             matchId={id}
             participantId={myParticipantId!}
             myReport={myReport ?? null}
-            opponentReported={Boolean(opponentReport)}
+            opponentReported={opponentHasReported}
             requireScreenshot={match.tournaments?.require_screenshot ?? true}
           />
         </div>
@@ -76,7 +81,7 @@ export default async function MatchPage({ params }: { params: Promise<{ id: stri
         <Card className="mt-4 border-brick-600 bg-brick-100/40">
           <p className="text-sm font-medium text-brick-600">Litige</p>
           <p className="text-xs text-ink-600">
-            Les scores saisis ne correspondent pas. L'administrateur va trancher.
+            Les scores saisis ne correspondent pas. L&apos;administrateur va trancher.
           </p>
         </Card>
       )}

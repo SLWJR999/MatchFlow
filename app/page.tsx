@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { getCurrentUser, getMyTournaments, getUpcomingMatches } from "@/lib/queries";
-import { formatDate, formatLabel, matchStatusLabel, matchStatusTone } from "@/lib/format";
+import { formatLabel, matchStatusLabel, matchStatusTone } from "@/lib/format";
 import Card from "@/components/ui/Card";
 import Badge from "@/components/ui/Badge";
 import EmptyState from "@/components/ui/EmptyState";

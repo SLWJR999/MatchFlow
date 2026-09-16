@@ -27,6 +27,8 @@ drop trigger if exists trg_touch_reports on match_reports;
 create trigger trg_touch_reports before update on match_reports
   for each row execute function fn_touch_updated_at();
 
+-- « mode moteur » : autorise les écritures faites par les triggers/RPC
+-- eux-mêmes, qui ont déjà vérifié les droits en amont.
 create or replace function fn_engine_on() returns void
 language sql as $$ select set_config('app.engine', '1', true); select null::void; $$;
 
@@ -38,6 +40,10 @@ language sql stable as $$
   select coalesce(current_setting('app.engine', true), '0') = '1'
 $$;
 
+-- Dépose une notification in-app. L'envoi Web Push effectif est déclenché
+-- côté plateforme par un Database Webhook Supabase sur l'INSERT de cette
+-- table (voir supabase/functions/send-push) : cette fonction ne fait
+-- qu'écrire la ligne, elle ne connaît rien au protocole push.
 create or replace function fn_notify(
   p_profile uuid, p_tournament uuid, p_kind notification_kind,
   p_title text, p_body text default null, p_link text default null
@@ -49,6 +55,8 @@ language sql security definer set search_path = public as $$
   select null::void;
 $$;
 
+-- Notifie tous les participants actifs (ayant un compte) d'un tournoi,
+-- éventuellement sauf un.
 create or replace function fn_notify_tournament(
   p_tournament uuid, p_kind notification_kind,
   p_title text, p_body text default null, p_link text default null,
@@ -109,6 +117,7 @@ drop trigger if exists trg_on_auth_user_created on auth.users;
 create trigger trg_on_auth_user_created after insert on auth.users
   for each row execute function fn_handle_new_user();
 
+-- Le créateur d'un tournoi en devient administrateur
 create or replace function fn_tournament_creator_is_admin() returns trigger
 language plpgsql security definer set search_path = public as $$
 begin
@@ -124,6 +133,8 @@ create trigger trg_tournament_creator after insert on tournaments
 
 -- ---------------------------------------------------------------------
 -- 2. FONCTIONS D'AUTORISATION (utilisées par les politiques RLS)
+--    SECURITY DEFINER => elles contournent le RLS, ce qui évite
+--    les récursions infinies dans les politiques.
 -- ---------------------------------------------------------------------
 
 create or replace function is_real_user() returns boolean
@@ -166,6 +177,11 @@ language sql stable security definer set search_path = public as $$
       or is_tournament_admin(p_tournament)
 $$;
 
+-- Visibilité des numéros, pilotée par tournaments.contacts_visibility :
+--   opponent_only    : soi-même, les admins, et l'adversaire d'un match
+--                       encore à jouer ou en litige (défaut, le plus prudent)
+--   all_participants : tout participant actif du tournoi
+--   hidden           : personne à part les admins et l'intéressé lui-même
 create or replace function can_see_contact(p_participant uuid) returns boolean
 language sql stable security definer set search_path = public as $$
   select exists (
@@ -197,6 +213,7 @@ language sql stable security definer set search_path = public as $$
   )
 $$;
 
+-- Le joueur peut-il saisir le score de ce match ?
 create or replace function can_report_match(p_match uuid) returns boolean
 language sql stable security definer set search_path = public as $$
   select exists (
@@ -215,6 +232,7 @@ language sql stable security definer set search_path = public as $$
   )
 $$;
 
+-- Faut-il des tirs au but pour départager, compte tenu du score proposé ?
 create or replace function fn_tie_needs_pens(p_match uuid, p_home int, p_away int)
 returns boolean
 language plpgsql stable security definer set search_path = public as $$
@@ -229,7 +247,7 @@ begin
   select * into v_tie from ties where id = v_m.tie_id;
 
   select count(*) into v_legs from matches where tie_id = v_m.tie_id;
-  if v_m.leg <> v_legs then return false; end if;
+  if v_m.leg <> v_legs then return false; end if;   -- pas la manche décisive
 
   if v_legs = 1 then
     return p_home = p_away;
@@ -237,9 +255,10 @@ begin
 
   select * into l1 from matches where tie_id = v_m.tie_id and leg = 1;
   if l1.status not in ('validated', 'walkover') or l1.home_score is null then
-    return false;
+    return false;    -- l'aller n'est pas encore officiel, on ne peut pas trancher
   end if;
 
+  -- manche retour : le receveur est participant_b
   agg_a  := l1.home_score + p_away;
   agg_b  := l1.away_score + p_home;
   away_a := p_away;
@@ -275,6 +294,7 @@ begin
       using errcode = 'check_violation';
   end if;
 
+  -- Le rapport doit émaner du joueur concerné, ou d'un admin
   if not v_is_admin then
     if new.participant_id <> my_participant_id(v_m.tournament_id) then
       raise exception 'Vous ne pouvez saisir que votre propre rapport.'
@@ -295,6 +315,9 @@ begin
     end if;
   end if;
 
+  -- En coupe, si la manche décisive laisse les deux joueurs à égalité
+  -- (au cumul, règle des buts à l'extérieur appliquée), les tirs au but
+  -- sont obligatoires.
   if fn_tie_needs_pens(v_m.id, new.home_score, new.away_score)
      and (new.home_pens is null or new.away_pens is null
           or new.home_pens = new.away_pens) then
@@ -339,6 +362,7 @@ begin
   perform fn_engine_on();
 
   if v_m.admin_override then
+    -- l'admin a tranché : on ne touche plus à rien
     null;
 
   elsif n_reports = 0 then
@@ -469,6 +493,7 @@ begin
         using errcode = 'check_violation';
     end if;
 
+    -- on ne dévalide pas un match dont le vainqueur est déjà passé au tour suivant
     if old.status = 'validated' and old.tie_id is not null then
       if exists (
         select 1 from ties t
@@ -514,6 +539,8 @@ begin
   if not found then return; end if;
   select * into v_t from tournaments where id = v_round.tournament_id;
 
+  -- Une journée de championnat non encore publiée reste 'pending' même si
+  -- ses matchs existent déjà (le calendrier entier est généré d'un coup).
   if v_t.format = 'league' and v_round.status = 'pending' then
     return;
   end if;
@@ -542,6 +569,7 @@ begin
   end if;
 end $$;
 
+-- Ouvre la journée suivante d'un championnat (auto ou déclenché par un admin)
 create or replace function fn_publish_next_round(p_tournament uuid, p_current_ordinal int)
 returns void language plpgsql security definer set search_path = public as $$
 declare v_next rounds;
@@ -558,6 +586,7 @@ begin
     '/tournois/' || p_tournament || '/matchs');
 end $$;
 
+-- Crée les matchs d'une confrontation dès que les deux qualifiés sont connus
 create or replace function fn_materialize_tie(p_tie uuid) returns void
 language plpgsql security definer set search_path = public as $$
 declare
@@ -606,6 +635,7 @@ begin
     '/tournois/' || v_tie.tournament_id || '/matchs');
 end $$;
 
+-- Place un qualifié dans la confrontation suivante
 create or replace function fn_place_in_tie(p_tie uuid, p_slot char, p_participant uuid)
 returns void language plpgsql security definer set search_path = public as $$
 begin
@@ -619,6 +649,7 @@ begin
   perform fn_materialize_tie(p_tie);
 end $$;
 
+-- Un seul inscrit dans la confrontation => qualification d'office
 create or replace function fn_settle_bye(p_tie uuid) returns void
 language plpgsql security definer set search_path = public as $$
 declare v_tie ties; v_prev_done boolean;
@@ -626,6 +657,7 @@ begin
   select * into v_tie from ties where id = p_tie;
   if v_tie.status = 'completed' then return; end if;
 
+  -- exempt seulement si l'autre place ne peut plus être remplie
   select not exists (
     select 1 from ties s where s.next_tie_id = p_tie and s.status <> 'completed'
   ) into v_prev_done;
@@ -641,6 +673,7 @@ begin
   end if;
 end $$;
 
+-- Détermine le vainqueur d'une confrontation et fait avancer le tableau
 create or replace function fn_settle_tie(p_tie uuid) returns void
 language plpgsql security definer set search_path = public as $$
 declare
@@ -667,9 +700,9 @@ begin
     away_a := 0; away_b := 0;
   else
     select * into l2 from matches where tie_id = p_tie and leg = 2;
-    agg_a := l1.home_score + l2.away_score;
+    agg_a := l1.home_score + l2.away_score;   -- A reçoit à l'aller
     agg_b := l1.away_score + l2.home_score;
-    away_a := l2.away_score;
+    away_a := l2.away_score;                  -- buts de A à l'extérieur
     away_b := l1.away_score;
   end if;
 
@@ -684,11 +717,13 @@ begin
       v_winner := v_tie.participant_b; v_loser := v_tie.participant_a;
     end if;
   else
+    -- tirs au but sur la dernière manche
     declare last_m matches;
     begin
       select * into last_m from matches where tie_id = p_tie order by leg desc limit 1;
       if last_m.home_pens is null or last_m.away_pens is null
          or last_m.home_pens = last_m.away_pens then
+        -- égalité parfaite sans tirs au but : l'admin doit trancher
         perform log_activity(v_tie.tournament_id, 'tie_needs_pens', last_m.id,
                              jsonb_build_object('tie', p_tie));
         return;
@@ -706,6 +741,7 @@ begin
 
   perform fn_place_in_tie(v_tie.next_tie_id, v_tie.next_slot, v_winner);
 
+  -- petite finale alimentée par les perdants des demies
   if v_tie.stage = 'SF' and v_t.third_place_match then
     select id into v_3p from ties
       where tournament_id = v_tie.tournament_id and stage = '3P' limit 1;
@@ -752,6 +788,7 @@ begin
       '/tournois/' || new.tournament_id || '/matchs');
   end if;
 
+  -- championnat terminé ?
   if new.status in ('validated', 'walkover', 'cancelled') then
     select count(*) into v_remaining from matches
       where tournament_id = new.tournament_id
@@ -805,6 +842,7 @@ begin
   perform fn_engine_on();
 
   for leg in 1..v_t.legs loop
+    -- on repart de l'ordre initial à chaque manche
     select array_agg(id order by coalesce(seed, 999), lower(display_name)) into ids
       from participants where tournament_id = p_tournament and status <> 'withdrawn';
     if array_length(ids, 1) % 2 = 1 then ids := ids || array[null::uuid]; end if;
@@ -821,6 +859,7 @@ begin
 
       for i in 1..half loop
         a := ids[i]; b := ids[nn + 1 - i];
+        -- alternance domicile/extérieur, inversée au retour
         if (r % 2 = 0) <> (leg = 2) then tmp := a; a := b; b := tmp; end if;
 
         if a is not null and b is not null then
@@ -830,6 +869,7 @@ begin
         end if;
       end loop;
 
+      -- rotation : le premier reste fixe, les autres tournent
       ids := array[ids[1]] || ids[nn:nn] || ids[2:nn-1];
     end loop;
   end loop;
@@ -877,6 +917,7 @@ begin
 
   perform fn_engine_on();
 
+  -- 8.1 les tours, du premier au dernier
   for s in reverse levels..1 loop
     num := (2 ^ (s - 1))::int;
     v_stage := fn_stage_label(num);
@@ -904,6 +945,7 @@ begin
     values (p_tournament, ord, 'Match pour la 3e place', 1, '3P', 'pending'::round_status);
   end if;
 
+  -- 8.2 les confrontations, de la finale vers le premier tour (pour chaîner next_tie_id)
   prev_ids := null;
   for s in 1..levels loop
     num := (2 ^ (s - 1))::int;
@@ -919,12 +961,14 @@ begin
     end loop;
     prev_ids := level_ids;
   end loop;
+  -- prev_ids contient désormais les confrontations du premier tour
 
   if v_t.third_place_match and levels >= 2 then
     insert into ties (tournament_id, stage, position) values (p_tournament, '3P', 1)
     returning id into v_3p;
   end if;
 
+  -- 8.3 ordre des têtes de série : 1-16, 8-9, 5-12, 4-13, ...
   seed_order := array[1];
   while array_length(seed_order, 1) < size loop
     tmp := array[]::int[];
@@ -935,6 +979,7 @@ begin
     seed_order := tmp;
   end loop;
 
+  -- 8.4 placement des joueurs + exemptions
   for i in 1..(size / 2) loop
     update ties set
       participant_a = case when seed_order[2*i - 1] <= n then ids[seed_order[2*i - 1]] end,
@@ -960,6 +1005,7 @@ end $$;
 -- 9. RPC APPELABLES DEPUIS LE CLIENT
 -- ---------------------------------------------------------------------
 
+-- 9.1 Réclamer une place via un lien d'invitation
 create or replace function claim_participant(p_token uuid)
 returns participants
 language plpgsql security definer set search_path = public as $$
@@ -995,6 +1041,7 @@ begin
   return v_p;
 end $$;
 
+-- 9.2 Rejoindre un tournoi ouvert avec un code
 create or replace function join_tournament_by_code(p_code text, p_display_name text default null)
 returns participants
 language plpgsql security definer set search_path = public as $$
@@ -1033,6 +1080,7 @@ begin
   return v_p;
 end $$;
 
+-- 9.3 L'admin ajoute un joueur (sans compte) et récupère son lien
 create or replace function add_participant(
   p_tournament uuid, p_display_name text,
   p_phone text default null, p_team_name text default null
@@ -1064,6 +1112,7 @@ begin
   return v_p;
 end $$;
 
+-- 9.4 Régénérer un lien d'invitation compromis
 create or replace function reset_claim_token(p_participant uuid) returns uuid
 language plpgsql security definer set search_path = public as $$
 declare v_tid uuid; v_new uuid;
@@ -1079,6 +1128,7 @@ begin
   return v_new;
 end $$;
 
+-- 9.5 Lancer le tournoi
 create or replace function generate_schedule(p_tournament uuid) returns int
 language plpgsql security definer set search_path = public as $$
 declare v_t tournaments;
@@ -1096,6 +1146,7 @@ begin
   end if;
 end $$;
 
+-- 9.6 Validation d'un match par l'admin
 create or replace function validate_match(p_match uuid) returns matches
 language plpgsql security definer set search_path = public as $$
 declare v_m matches;
@@ -1112,6 +1163,7 @@ begin
   return v_m;
 end $$;
 
+-- 9.7 Validation d'une journée entière
 create or replace function validate_round(p_round uuid) returns int
 language plpgsql security definer set search_path = public as $$
 declare v_tid uuid; v_n int;
@@ -1134,6 +1186,7 @@ begin
   return v_n;
 end $$;
 
+-- 9.8 Arbitrage d'un litige : l'admin impose le score
 create or replace function resolve_dispute(
   p_match uuid, p_home_score int, p_away_score int,
   p_home_pens int default null, p_away_pens int default null,
@@ -1160,6 +1213,7 @@ begin
   return v_m;
 end $$;
 
+-- 9.9 Forfait
 create or replace function declare_walkover(
   p_match uuid, p_winner uuid, p_goals int default 3
 ) returns matches
@@ -1183,6 +1237,7 @@ begin
   return v_m;
 end $$;
 
+-- 9.10 Départage par confrontation directe, pour un groupe d'ex æquo
 create or replace function fn_head_to_head(p_tournament uuid, p_ids uuid[])
 returns table (participant_id uuid, h2h_points int, h2h_diff int)
 language sql stable security definer set search_path = public as $$
@@ -1207,6 +1262,7 @@ language sql stable security definer set search_path = public as $$
   group by r.pid, t.points_win, t.points_draw
 $$;
 
+-- 9.11 Le tableau de bord d'un joueur : ses prochains matchs, tous tournois
 create or replace function my_upcoming_matches()
 returns table (
   match_id uuid, tournament_id uuid, tournament_name text,
@@ -1234,6 +1290,7 @@ language sql stable security definer set search_path = public as $$
   order by m.scheduled_at nulls last, r.ordinal
 $$;
 
+-- 9.12 Publication manuelle d'une journée (quand auto_publish_rounds = false)
 create or replace function publish_round(p_round uuid) returns rounds
 language plpgsql security definer set search_path = public as $$
 declare v_r rounds;
@@ -1255,6 +1312,7 @@ begin
   return v_r;
 end $$;
 
+-- 9.13 Retrait d'un participant en cours de tournoi
 create or replace function withdraw_participant(p_participant uuid) returns participants
 language plpgsql security definer set search_path = public as $$
 declare v_p participants; v_t tournaments; m record;
@@ -1271,6 +1329,7 @@ begin
 
   if v_t.format = 'league' then
     if v_t.withdrawal_policy = 'cancel_all' then
+      -- ses matchs, joués ou non, sont neutralisés pour tout le monde
       update matches set status = 'cancelled', admin_override = true,
              admin_note = coalesce(admin_note || ' ', '') || '[retrait de ' || v_p.display_name || ']'
         where tournament_id = v_p.tournament_id
@@ -1278,6 +1337,7 @@ begin
           and status <> 'cancelled';
 
     elsif v_t.withdrawal_policy = 'keep_forfeit_rest' then
+      -- l'acquis reste au classement, le reste passe forfait pour l'adversaire
       for m in
         select id, home_id, away_id from matches
         where tournament_id = v_p.tournament_id
@@ -1292,13 +1352,15 @@ begin
         where id = m.id;
       end loop;
 
-    else
+    else -- 'freeze' : ce qui est joué reste, le reste ne compte pour personne
       update matches set status = 'cancelled'
         where tournament_id = v_p.tournament_id
           and (home_id = p_participant or away_id = p_participant)
           and status in ('scheduled', 'reported', 'confirmed', 'disputed');
     end if;
   end if;
+  -- En coupe, on ne touche pas automatiquement au tableau : l'admin tranche
+  -- les confrontations en attente au cas par cas avec declare_walkover().
 
   update participants set status = 'withdrawn', withdrawn_at = now()
     where id = p_participant returning * into v_p;
@@ -1314,6 +1376,7 @@ begin
   return v_p;
 end $$;
 
+-- 9.14 Phase finale enchaînée après un championnat (deux tournois liés)
 create or replace function generate_final_phase(
   p_parent uuid, p_qualifiers int, p_name text default null, p_legs int default 1
 ) returns tournaments
@@ -1356,6 +1419,7 @@ begin
     v_parent.contacts_visibility, true, v_parent.is_public, v_parent.default_venue
   ) returning * into v_new;
 
+  -- reprend les N premiers du classement, tête de série = position finale
   insert into participants (tournament_id, profile_id, display_name, team_name, seed)
   select v_new.id, p.profile_id, p.display_name, p.team_name, s.position
   from standings s
@@ -1386,6 +1450,7 @@ do $$ begin
   if exists (select 1 from pg_roles where rolname = 'authenticated') then
     execute 'grant execute on all functions in schema public to authenticated';
     execute 'grant execute on function claim_participant(uuid), join_tournament_by_code(text, text) to anon';
+    -- les fonctions internes ne sont pas appelables directement
     execute 'revoke execute on function
                fn_engine_on(), fn_engine_off(), fn_generate_league(uuid), fn_generate_knockout(uuid),
                fn_settle_tie(uuid), fn_place_in_tie(uuid, char, uuid), fn_materialize_tie(uuid),

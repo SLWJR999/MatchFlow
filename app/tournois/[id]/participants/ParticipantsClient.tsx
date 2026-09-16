@@ -98,7 +98,7 @@ export default function ParticipantsClient({
                   onClick={() => handleCopyLink(p)}
                   className="rounded-lg bg-pitch-100 px-3 py-1.5 text-xs font-medium text-pitch-900"
                 >
-                  Copier le lien d'invitation
+                  Copier le lien d&apos;invitation
                 </button>
                 <button onClick={() => handleReset(p)} className="text-xs text-ink-600">
                   Régénérer

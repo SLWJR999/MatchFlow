@@ -1,4 +1,5 @@
 import { createServerClient } from '@supabase/ssr';
+import { createClient as createSupabaseJsClient } from '@supabase/supabase-js';
 import { cookies } from 'next/headers';
 
 // Utilisé dans les Server Components, Server Actions et Route Handlers.
@@ -33,8 +34,7 @@ export async function createClient() {
 // ont explicitement besoin d'agir pour tout le monde (ex. webhook de push).
 // Sa clé ne doit JAMAIS être exposée au navigateur (pas de préfixe NEXT_PUBLIC_).
 export function createServiceClient() {
-  const { createClient: createSupabaseClient } = require('@supabase/supabase-js');
-  return createSupabaseClient(
+  return createSupabaseJsClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.SUPABASE_SERVICE_ROLE_KEY!,
     { auth: { autoRefreshToken: false, persistSession: false } },

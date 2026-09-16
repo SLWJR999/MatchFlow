@@ -1,20 +1,22 @@
 import type { Metadata, Viewport } from "next";
-import { Inter, Space_Grotesk } from "next/font/google";
+import "@fontsource/inter/400.css";
+import "@fontsource/inter/500.css";
+import "@fontsource/inter/600.css";
+import "@fontsource/space-grotesk/500.css";
+import "@fontsource/space-grotesk/600.css";
+import "@fontsource/space-grotesk/700.css";
 import "./globals.css";
 import BottomNav from "@/components/BottomNav";
 import RegisterServiceWorker from "@/components/RegisterServiceWorker";
-
-const inter = Inter({ variable: "--font-inter", subsets: ["latin"] });
-const spaceGrotesk = Space_Grotesk({
-  variable: "--font-space-grotesk",
-  subsets: ["latin"],
-  weight: ["500", "600", "700"],
-});
 
 export const metadata: Metadata = {
   title: "MatchFlow",
   description: "Organise, joue, valide tes tournois de football.",
   manifest: "/manifest.webmanifest",
+  icons: {
+    icon: [{ url: "/icons/icon-192.png", sizes: "192x192", type: "image/png" }],
+    apple: [{ url: "/icons/icon-192.png", sizes: "192x192", type: "image/png" }],
+  },
   appleWebApp: { capable: true, statusBarStyle: "default", title: "MatchFlow" },
 };
 
@@ -27,7 +29,7 @@ export const viewport: Viewport = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="fr" className={`${inter.variable} ${spaceGrotesk.variable} h-full`}>
+    <html lang="fr" className="h-full">
       <body className="min-h-full flex flex-col bg-paper text-ink-900 antialiased">
         <RegisterServiceWorker />
         <main className="flex-1 pb-20">{children}</main>

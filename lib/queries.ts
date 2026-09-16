@@ -129,6 +129,16 @@ export async function getTies(tournamentId: string): Promise<Tie[]> {
   return (data ?? []) as Tie[];
 }
 
+// Confrontations avec leurs matchs imbriqués, pour la vue en tableau.
+export async function getTiesWithMatches(tournamentId: string) {
+  const supabase = await createClient();
+  const { data } = await supabase
+    .from("ties")
+    .select("*, matches(id, home_score, away_score, status, leg)")
+    .eq("tournament_id", tournamentId);
+  return data ?? [];
+}
+
 export async function getMatchesWithNames(tournamentId: string): Promise<MatchWithNames[]> {
   const supabase = await createClient();
   const { data } = await supabase

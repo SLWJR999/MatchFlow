@@ -55,12 +55,30 @@ export async function updateMyProfile(displayName: string, phone: string | null)
   return { ok: true };
 }
 
+// Convertit un compte anonyme (arrivé par lien d'invitation) en compte
+// complet, sans rien perdre de sa participation aux tournois : Supabase
+// rattache l'email à la MÊME session, l'id utilisateur ne change pas.
+export async function linkEmailToAccount(email: string) {
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return { error: "Non connecté." };
+  const { error } = await supabase.auth.updateUser(
+    { email },
+    { emailRedirectTo: `${siteUrl()}/auth/callback` },
+  );
+  if (error) return { error: error.message };
+  return { ok: true };
+}
+
 // ---------------------------------------------------------------- TOURNOIS
 export async function createTournament(input: {
   name: string; format: "league" | "knockout"; legs: 1 | 2;
   max_participants: number; require_screenshot: boolean;
   allow_self_report: boolean; third_place_match: boolean;
   contacts_visibility: "opponent_only" | "all_participants" | "hidden";
+  auto_validate?: boolean; auto_publish_rounds?: boolean;
+  default_venue?: string | null; walkover_goals?: number;
+  report_deadline_h?: number; is_public?: boolean;
 }) {
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();

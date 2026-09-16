@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import { sendMagicLink, signInWithGoogle } from "@/lib/actions";
 import Button from "@/components/ui/Button";
 import Card from "@/components/ui/Card";
@@ -62,6 +63,7 @@ export default function LoginPage() {
 
       <p className="mt-6 text-center text-xs text-ink-600">
         Invité·e à un tournoi ? Utilise le lien reçu par WhatsApp — pas besoin de créer de compte.
+        {" "}Ou <Link href="/rejoindre" className="underline underline-offset-2">entre un code de tournoi</Link>.
       </p>
     </div>
   );

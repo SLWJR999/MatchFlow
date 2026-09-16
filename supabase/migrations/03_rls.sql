@@ -1,7 +1,12 @@
 -- =====================================================================
 --  TOURNOIS FOOT — 03 · SÉCURITÉ (RLS)
+--  Sans ce fichier, n'importe qui peut modifier les scores des autres
+--  via l'API auto-générée de Supabase. Il n'est pas optionnel.
 -- =====================================================================
 
+-- ---------------------------------------------------------------------
+-- 0. RÔLES ET PERMISSIONS DE BASE
+-- ---------------------------------------------------------------------
 do $$ begin
   if exists (select 1 from pg_roles where rolname = 'authenticated') then
     execute 'grant usage on schema public to anon, authenticated';
@@ -15,12 +20,16 @@ do $$ begin
   end if;
 end $$;
 
+-- ---------------------------------------------------------------------
+-- 1. UN PARTICIPANT NE PEUT PAS S'AUTO-PROMOUVOIR
+-- ---------------------------------------------------------------------
 create or replace function fn_guard_participant_update() returns trigger
 language plpgsql security definer set search_path = public as $$
 begin
   if is_tournament_admin(new.tournament_id) or fn_engine_is_on() then
     return new;
   end if;
+  -- un joueur ne modifie que son nom d'affichage et son équipe
   if new.profile_id  is distinct from old.profile_id
   or new.tournament_id is distinct from old.tournament_id
   or new.status      is distinct from old.status
@@ -36,6 +45,8 @@ drop trigger if exists trg_guard_participant on participants;
 create trigger trg_guard_participant before update on participants
   for each row execute function fn_guard_participant_update();
 
+-- Le rapport de l'adversaire ne devient visible qu'une fois le sien déposé :
+-- sinon il suffit de recopier pour faire passer n'importe quel score.
 create or replace function can_see_report(p_match uuid, p_participant uuid)
 returns boolean
 language sql stable security definer set search_path = public as $$
@@ -55,6 +66,9 @@ language sql stable security definer set search_path = public as $$
   )
 $$;
 
+-- ---------------------------------------------------------------------
+-- 2. ACTIVATION DU RLS
+-- ---------------------------------------------------------------------
 alter table profiles             enable row level security;
 alter table tournaments          enable row level security;
 alter table tournament_admins    enable row level security;
@@ -68,6 +82,9 @@ alter table activity_log         enable row level security;
 alter table notifications        enable row level security;
 alter table push_subscriptions   enable row level security;
 
+-- ---------------------------------------------------------------------
+-- 3. PROFILES
+-- ---------------------------------------------------------------------
 drop policy if exists profiles_select_own on profiles;
 create policy profiles_select_own on profiles
   for select using (id = auth.uid());
@@ -80,10 +97,15 @@ drop policy if exists profiles_insert_own on profiles;
 create policy profiles_insert_own on profiles
   for insert with check (id = auth.uid());
 
+-- ---------------------------------------------------------------------
+-- 4. TOURNAMENTS
+-- ---------------------------------------------------------------------
 drop policy if exists tournaments_select on tournaments;
 create policy tournaments_select on tournaments
   for select using (is_public or is_participant(id) or is_tournament_admin(id));
 
+-- Seul un compte non anonyme peut créer un tournoi : on veut pouvoir
+-- retrouver l'administrateur.
 drop policy if exists tournaments_insert on tournaments;
 create policy tournaments_insert on tournaments
   for insert with check (is_real_user() and created_by = auth.uid());
@@ -96,6 +118,9 @@ drop policy if exists tournaments_delete on tournaments;
 create policy tournaments_delete on tournaments
   for delete using (created_by = auth.uid() and status = 'draft');
 
+-- ---------------------------------------------------------------------
+-- 5. ADMINISTRATEURS
+-- ---------------------------------------------------------------------
 drop policy if exists admins_select on tournament_admins;
 create policy admins_select on tournament_admins
   for select using (can_see_tournament(tournament_id));
@@ -105,6 +130,9 @@ create policy admins_write on tournament_admins
   for all using (is_tournament_admin(tournament_id))
   with check (is_tournament_admin(tournament_id));
 
+-- ---------------------------------------------------------------------
+-- 6. PARTICIPANTS
+-- ---------------------------------------------------------------------
 drop policy if exists participants_select on participants;
 create policy participants_select on participants
   for select using (can_see_tournament(tournament_id));
@@ -125,6 +153,9 @@ create policy participants_delete on participants
                 where t.id = tournament_id and t.status = 'draft')
   );
 
+-- ---------------------------------------------------------------------
+-- 7. COORDONNÉES — visibles seulement de l'adversaire du moment
+-- ---------------------------------------------------------------------
 drop policy if exists contacts_select on participant_contacts;
 create policy contacts_select on participant_contacts
   for select using (can_see_contact(participant_id));
@@ -141,6 +172,9 @@ create policy contacts_write on participant_contacts
               and (p.profile_id = auth.uid() or is_tournament_admin(p.tournament_id)))
   );
 
+-- ---------------------------------------------------------------------
+-- 8. JOURNÉES, CONFRONTATIONS, MATCHS
+-- ---------------------------------------------------------------------
 drop policy if exists rounds_select on rounds;
 create policy rounds_select on rounds
   for select using (can_see_tournament(tournament_id));
@@ -163,11 +197,16 @@ drop policy if exists matches_select on matches;
 create policy matches_select on matches
   for select using (can_see_tournament(tournament_id));
 
+-- L'écriture directe sur matches est réservée aux admins ; les joueurs
+-- passent par match_reports, et les triggers (SECURITY DEFINER) font le reste.
 drop policy if exists matches_write on matches;
 create policy matches_write on matches
   for all using (is_tournament_admin(tournament_id))
   with check (is_tournament_admin(tournament_id));
 
+-- ---------------------------------------------------------------------
+-- 9. RAPPORTS DE SCORE — le cœur du modèle de sécurité
+-- ---------------------------------------------------------------------
 drop policy if exists reports_select on match_reports;
 create policy reports_select on match_reports
   for select using (can_see_report(match_id, participant_id));
@@ -188,9 +227,13 @@ create policy reports_delete on match_reports
               and is_tournament_admin(m.tournament_id))
   );
 
+-- ---------------------------------------------------------------------
+-- 10. JOURNAL, NOTIFICATIONS
+-- ---------------------------------------------------------------------
 drop policy if exists activity_select on activity_log;
 create policy activity_select on activity_log
   for select using (can_see_tournament(tournament_id));
+-- aucune policy d'écriture : seule log_activity() (SECURITY DEFINER) écrit ici
 
 drop policy if exists notifications_own on notifications;
 create policy notifications_own on notifications
@@ -200,6 +243,10 @@ drop policy if exists push_own on push_subscriptions;
 create policy push_own on push_subscriptions
   for all using (profile_id = auth.uid()) with check (profile_id = auth.uid());
 
+-- ---------------------------------------------------------------------
+-- 11. STOCKAGE DES CAPTURES D'ÉCRAN
+--     Convention de chemin : <tournament_id>/<match_id>/<participant_id>.jpg
+-- ---------------------------------------------------------------------
 do $$ begin
   if to_regprocedure('storage.foldername(text)') is null then
     raise notice 'Schéma storage absent : section ignorée (normal en local).';
@@ -242,6 +289,9 @@ do $$ begin
   $p$;
 end $$;
 
+-- ---------------------------------------------------------------------
+-- 12. TEMPS RÉEL — scores et classement qui se mettent à jour tout seuls
+-- ---------------------------------------------------------------------
 do $$
 declare t text;
 begin
