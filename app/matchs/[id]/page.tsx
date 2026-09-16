@@ -1,10 +1,11 @@
 import { notFound, redirect } from "next/navigation";
 import Link from "next/link";
-import { getCurrentUser, getMatch, getMatchReports, getContact } from "@/lib/queries";
+import { getCurrentUser, getMatch, getMatchReports, getContact, isTournamentAdmin } from "@/lib/queries";
 import { matchStatusLabel, matchStatusTone, formatDate, scoreLine, waLink, telLink } from "@/lib/format";
 import Card from "@/components/ui/Card";
 import Badge from "@/components/ui/Badge";
 import MatchReportForm from "./MatchReportForm";
+import AdminScoreForm from "./AdminScoreForm";
 
 export default async function MatchPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -13,6 +14,9 @@ export default async function MatchPage({ params }: { params: Promise<{ id: stri
 
   const match = await getMatch(id);
   if (!match) notFound();
+
+  const isAdmin = await isTournamentAdmin(match.tournament_id);
+  const selfReportEnabled = match.tournaments?.allow_self_report ?? true;
 
   const reports = await getMatchReports(id);
   const myParticipantId =
@@ -30,7 +34,9 @@ export default async function MatchPage({ params }: { params: Promise<{ id: stri
   const opponentHasReported =
     !myReport && ["reported", "confirmed", "disputed"].includes(match.status);
 
-  const canReport = myParticipantId && ["scheduled", "reported", "confirmed", "disputed"].includes(match.status);
+  const canReport =
+    myParticipantId && selfReportEnabled &&
+    ["scheduled", "reported", "confirmed", "disputed"].includes(match.status);
 
   return (
     <div className="mx-auto max-w-md px-4 pt-6 pb-8">
@@ -73,6 +79,26 @@ export default async function MatchPage({ params }: { params: Promise<{ id: stri
             myReport={myReport ?? null}
             opponentReported={opponentHasReported}
             requireScreenshot={match.tournaments?.require_screenshot ?? true}
+          />
+        </div>
+      )}
+
+      {myParticipantId && !selfReportEnabled && match.status !== "validated" && !isAdmin && (
+        <Card className="mt-4">
+          <p className="text-sm text-ink-900">
+            Seul l&apos;administrateur saisit les scores dans ce tournoi.
+          </p>
+          <p className="mt-1 text-xs text-ink-600">
+            Donne-lui le résultat, il l&apos;enregistrera pour que ce soit officiel.
+          </p>
+        </Card>
+      )}
+
+      {isAdmin && match.status !== "validated" && (
+        <div className="mt-4">
+          <AdminScoreForm
+            matchId={id} tournamentId={match.tournament_id}
+            currentHome={match.home_score} currentAway={match.away_score}
           />
         </div>
       )}

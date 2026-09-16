@@ -250,6 +250,7 @@ export async function resolveDispute(input: {
   });
   if (error) return { error: error.message };
   revalidatePath(`/tournois/${input.tournamentId}/admin`);
+  revalidatePath(`/matchs/${input.matchId}`);
   return { ok: true };
 }
 
