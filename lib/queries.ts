@@ -189,9 +189,15 @@ export async function getPendingValidations(tournamentId: string) {
   const supabase = await createClient();
   const { data } = await supabase
     .from("matches")
-    .select("*, home:participants!matches_home_id_fkey(display_name), away:participants!matches_away_id_fkey(display_name), rounds(name)")
+    .select(`
+      *,
+      home:participants!matches_home_id_fkey(display_name),
+      away:participants!matches_away_id_fkey(display_name),
+      rounds(name),
+      match_reports(participant_id, home_score, away_score, screenshot_path)
+    `)
     .eq("tournament_id", tournamentId)
-    .in("status", ["confirmed", "disputed"])
+    .in("status", ["reported", "confirmed", "disputed"])
     .order("created_at");
   return data ?? [];
 }

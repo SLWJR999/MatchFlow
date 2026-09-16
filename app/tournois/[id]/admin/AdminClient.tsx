@@ -20,7 +20,7 @@ export default function AdminClient({
 }) {
   const router = useRouter();
   const [busy, setBusy] = useState<string | null>(null);
-  const [disputeDraft, setDisputeDraft] = useState<Record<string, { h: string; a: string }>>({});
+  const [disputeDraft, setDisputeDraft] = useState<Record<string, { h: string; a: string } | undefined>>({});
   const [qualifiers, setQualifiers] = useState(4);
 
   async function run(id: string, fn: () => Promise<any>) {
@@ -85,33 +85,110 @@ export default function AdminClient({
                     </div>
                   )}
                   <div className="space-y-3">
-                    {roundMatches.map((m) => (
-                      <Card key={m.id}>
-                        <div className="flex items-center justify-between">
-                          <p className="text-sm font-medium text-ink-900">
-                            {m.home?.display_name} vs {m.away?.display_name}
-                          </p>
-                          <Badge tone={m.status === "disputed" ? "brick" : "gold"}>
-                            {m.status === "disputed" ? "Litige" : "Confirmé"}
-                          </Badge>
-                        </div>
-                        <p className="text-xs text-ink-600">{m.rounds?.name}</p>
+                    {roundMatches.map((m) => {
+                      const myReports: { participant_id: string; home_score: number; away_score: number }[] =
+                        m.match_reports ?? [];
+                      const homeReport = myReports.find((r) => r.participant_id === m.home_id);
+                      const awayReport = myReports.find((r) => r.participant_id === m.away_id);
+                      const isSingleReport = m.status === "reported";
+                      const isDisputed = m.status === "disputed";
 
-                        {m.status === "confirmed" ? (
-                          <div className="mt-2 flex items-center justify-between">
-                            <span className="tabular-score font-semibold">
-                              {scoreLine(m.home_score, m.away_score)}
-                            </span>
-                            <Button
-                              disabled={busy === m.id}
-                              onClick={() => run(m.id, () => validateMatch(m.id, tournamentId))}
-                            >
-                              Valider
-                            </Button>
+                      return (
+                        <Card key={m.id}>
+                          <div className="flex items-center justify-between">
+                            <p className="text-sm font-medium text-ink-900">
+                              {m.home?.display_name} vs {m.away?.display_name}
+                            </p>
+                            <Badge tone={isDisputed ? "brick" : "gold"}>
+                              {isDisputed ? "Litige" : isSingleReport ? "1 seul rapport" : "Confirmé"}
+                            </Badge>
                           </div>
-                        ) : (
-                          <div className="mt-2 space-y-2">
-                            <div className="flex items-center gap-2">
+                          <p className="text-xs text-ink-600">{m.rounds?.name}</p>
+
+                          {isDisputed ? (
+                            <div className="mt-2 space-y-2">
+                              <div className="flex justify-between text-xs text-ink-600">
+                                <span>
+                                  {m.home?.display_name} a déclaré :{" "}
+                                  <span className="tabular-score font-medium text-ink-900">
+                                    {homeReport ? scoreLine(homeReport.home_score, homeReport.away_score) : "—"}
+                                  </span>
+                                </span>
+                              </div>
+                              <div className="flex justify-between text-xs text-ink-600">
+                                <span>
+                                  {m.away?.display_name} a déclaré :{" "}
+                                  <span className="tabular-score font-medium text-ink-900">
+                                    {awayReport ? scoreLine(awayReport.home_score, awayReport.away_score) : "—"}
+                                  </span>
+                                </span>
+                              </div>
+                              <div className="flex items-center gap-2">
+                                <input
+                                  type="number" placeholder="Score dom." min={0}
+                                  className="w-20 rounded-lg border border-line px-2 py-1.5 text-sm"
+                                  value={disputeDraft[m.id]?.h ?? ""}
+                                  onChange={(e) =>
+                                    setDisputeDraft((d) => ({
+                                      ...d, [m.id]: { h: e.target.value, a: d[m.id]?.a ?? "" },
+                                    }))
+                                  }
+                                />
+                                <span className="text-ink-600">—</span>
+                                <input
+                                  type="number" placeholder="Score ext." min={0}
+                                  className="w-20 rounded-lg border border-line px-2 py-1.5 text-sm"
+                                  value={disputeDraft[m.id]?.a ?? ""}
+                                  onChange={(e) =>
+                                    setDisputeDraft((d) => ({
+                                      ...d, [m.id]: { h: d[m.id]?.h ?? "", a: e.target.value },
+                                    }))
+                                  }
+                                />
+                                <Button
+                                  disabled={busy === m.id}
+                                  onClick={() => run(m.id, () => resolveDispute({
+                                    matchId: m.id, tournamentId,
+                                    homeScore: Number(disputeDraft[m.id]?.h ?? 0),
+                                    awayScore: Number(disputeDraft[m.id]?.a ?? 0),
+                                  }))}
+                                >
+                                  Trancher
+                                </Button>
+                              </div>
+                            </div>
+                          ) : (
+                            <div className="mt-2 flex items-center justify-between">
+                              <span className="tabular-score font-semibold">
+                                {scoreLine(m.home_score, m.away_score)}
+                              </span>
+                              <div className="flex items-center gap-2">
+                                <button
+                                  type="button"
+                                  className="text-xs text-ink-600 underline underline-offset-2"
+                                  onClick={() =>
+                                    setDisputeDraft((d) => ({
+                                      ...d,
+                                      [m.id]: d[m.id]
+                                        ? undefined
+                                        : { h: String(m.home_score ?? ""), a: String(m.away_score ?? "") },
+                                    }))
+                                  }
+                                >
+                                  Corriger
+                                </button>
+                                <Button
+                                  disabled={busy === m.id}
+                                  onClick={() => run(m.id, () => validateMatch(m.id, tournamentId))}
+                                >
+                                  Valider
+                                </Button>
+                              </div>
+                            </div>
+                          )}
+
+                          {!isDisputed && disputeDraft[m.id] && (
+                            <div className="mt-2 flex items-center gap-2 border-t border-line pt-2">
                               <input
                                 type="number" placeholder="Score dom." min={0}
                                 className="w-20 rounded-lg border border-line px-2 py-1.5 text-sm"
@@ -141,13 +218,13 @@ export default function AdminClient({
                                   awayScore: Number(disputeDraft[m.id]?.a ?? 0),
                                 }))}
                               >
-                                Trancher
+                                Enregistrer
                               </Button>
                             </div>
-                          </div>
-                        )}
-                      </Card>
-                    ))}
+                          )}
+                        </Card>
+                      );
+                    })}
                   </div>
                 </div>
               );

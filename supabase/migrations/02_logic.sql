@@ -374,9 +374,17 @@ begin
     where id = v_match_id;
 
   elsif n_reports = 1 then
+    -- Le score déclaré s'affiche tout de suite (marqué "en attente" côté
+    -- statut) : on ne fait plus attendre tout le monde derrière l'adversaire
+    -- qui ne rentre jamais son score. L'admin peut valider ce score seul
+    -- dès qu'il le souhaite (voir validate_match) ; si l'adversaire saisit
+    -- ensuite un score différent, ça repasse en litige.
     update matches set status = 'reported',
-           home_score = null, away_score = null,
-           home_pens = null, away_pens = null, winner_id = null
+           home_score = coalesce(r_home.home_score, r_away.home_score),
+           away_score = coalesce(r_home.away_score, r_away.away_score),
+           home_pens  = coalesce(r_home.home_pens, r_away.home_pens),
+           away_pens  = coalesce(r_home.away_pens, r_away.away_pens),
+           winner_id = null
     where id = v_match_id;
 
     declare
@@ -1155,7 +1163,7 @@ begin
   if not is_tournament_admin(v_m.tournament_id) then
     raise exception 'Réservé aux administrateurs du tournoi.' using errcode = 'insufficient_privilege';
   end if;
-  if v_m.status <> 'confirmed' then
+  if v_m.status not in ('reported', 'confirmed') then
     raise exception 'Ce match n''est pas prêt à être validé (statut : %).', v_m.status
       using errcode = 'check_violation';
   end if;
