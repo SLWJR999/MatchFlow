@@ -1039,10 +1039,12 @@ begin
     raise exception 'Vous participez déjà à ce tournoi.' using errcode = 'unique_violation';
   end if;
 
+  perform fn_engine_on();
   update participants
     set profile_id = auth.uid(), claimed_at = coalesce(claimed_at, now()), status = 'active'
   where id = v_p.id
   returning * into v_p;
+  perform fn_engine_off();
 
   perform log_activity(v_p.tournament_id, 'participant_claimed', null,
                        jsonb_build_object('participant', v_p.id));
