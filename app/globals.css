@@ -1,26 +1,76 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  /* Pelouse — surfaces fortes, actions */
+  --pitch-900: #0f3d2e;
+  --pitch-700: #165c40;
+  --pitch-600: #1f7a4d;
+  --pitch-100: #e3ede6;
+
+  /* Fond et texte */
+  --paper: #f2f4ef;
+  --surface: #ffffff;
+  --ink-900: #14201a;
+  --ink-600: #4b584f;
+  --line: #dde3da;
+
+  /* États : une seule couleur à la fois par écran */
+  --gold-500: #e8a73b;
+  --gold-100: #fbecd2;
+  --brick-600: #c1443b;
+  --brick-100: #f6dedb;
+
+  --font-display: var(--font-space-grotesk);
+  --font-body: var(--font-inter);
 }
 
 @theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --color-pitch-900: var(--pitch-900);
+  --color-pitch-700: var(--pitch-700);
+  --color-pitch-600: var(--pitch-600);
+  --color-pitch-100: var(--pitch-100);
+  --color-paper: var(--paper);
+  --color-surface: var(--surface);
+  --color-ink-900: var(--ink-900);
+  --color-ink-600: var(--ink-600);
+  --color-line: var(--line);
+  --color-gold-500: var(--gold-500);
+  --color-gold-100: var(--gold-100);
+  --color-brick-600: var(--brick-600);
+  --color-brick-100: var(--brick-100);
+  --font-display: var(--font-display);
+  --font-body: var(--font-body);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+* {
+  border-color: var(--line);
+}
+
+html {
+  background: var(--paper);
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background: var(--paper);
+  color: var(--ink-900);
+  font-family: var(--font-body), ui-sans-serif, system-ui, sans-serif;
+}
+
+.font-display {
+  font-family: var(--font-display), ui-sans-serif, system-ui, sans-serif;
+}
+
+/* Chiffres de score : toujours tabulaires, jamais proportionnels */
+.tabular-score {
+  font-family: var(--font-display), ui-sans-serif, system-ui, sans-serif;
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
 }
