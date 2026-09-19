@@ -693,7 +693,10 @@ declare
   v_3p uuid;
 begin
   select * into v_tie from ties where id = p_tie;
-  if v_tie.status = 'completed' then return; end if;
+  -- Pas de retour anticipé sur 'completed' ici : une correction de score
+  -- après coup doit pouvoir être reconsidérée. Les garde-fous contre un
+  -- tour suivant déjà entamé viennent plus bas, une fois le nouveau
+  -- vainqueur recalculé.
   select * into v_t from tournaments where id = v_tie.tournament_id;
 
   select count(*), count(*) filter (where status in ('validated', 'walkover'))
@@ -731,6 +734,10 @@ begin
       select * into last_m from matches where tie_id = p_tie order by leg desc limit 1;
       if last_m.home_pens is null or last_m.away_pens is null
          or last_m.home_pens = last_m.away_pens then
+        if v_tie.status = 'completed' then
+          -- une correction vient de casser l'écart qui donnait un vainqueur
+          perform fn_block_if_next_round_started(v_tie, v_t);
+        end if;
         -- égalité parfaite sans tirs au but : l'admin doit trancher
         perform log_activity(v_tie.tournament_id, 'tie_needs_pens', last_m.id,
                              jsonb_build_object('tie', p_tie));
@@ -742,6 +749,20 @@ begin
         v_winner := v_tie.participant_b; v_loser := v_tie.participant_a;
       end if;
     end;
+  end if;
+
+  -- Correction qui ne change pas l'issue : rien de plus à recalculer,
+  -- et surtout pas de notification "tournoi terminé" en double.
+  if v_tie.status = 'completed' and v_tie.winner_id = v_winner then
+    return;
+  end if;
+
+  -- Le vainqueur change (ou c'est le tout premier calcul). S'il y a déjà
+  -- un tour suivant matérialisé pour l'ancien vainqueur, on refuse plutôt
+  -- que de casser silencieusement le tableau : l'admin doit d'abord
+  -- annuler ces matchs-là.
+  if v_tie.status = 'completed' then
+    perform fn_block_if_next_round_started(v_tie, v_t);
   end if;
 
   update ties set winner_id = v_winner, loser_id = v_loser, status = 'completed'
@@ -769,13 +790,45 @@ begin
   end if;
 end $$;
 
+-- Empêche de corriger le vainqueur d'une confrontation dont le tour
+-- suivant a déjà été matérialisé (matchs créés, joués ou non) : dans ce
+-- cas le tableau ne peut plus être réécrit tout seul sans risquer une
+-- confrontation fantôme. L'admin doit d'abord s'occuper de ces matchs-là.
+create or replace function fn_block_if_next_round_started(v_tie ties, v_t tournaments)
+returns void language plpgsql stable as $$
+begin
+  if v_tie.next_tie_id is not null
+     and exists (select 1 from matches where tie_id = v_tie.next_tie_id) then
+    raise exception
+      'Impossible : le tour suivant a déjà commencé avec le vainqueur précédent. Corrige ou annule d''abord ses matchs avant de revenir sur celui-ci.'
+      using errcode = 'check_violation';
+  end if;
+
+  if v_t.third_place_match and v_tie.stage = 'SF'
+     and exists (
+       select 1 from matches m3 join ties t3 on t3.id = m3.tie_id
+       where t3.tournament_id = v_tie.tournament_id and t3.stage = '3P'
+     ) then
+    raise exception
+      'Impossible : le match pour la 3e place a déjà commencé avec le perdant précédent. Corrige ou annule-le d''abord.'
+      using errcode = 'check_violation';
+  end if;
+end $$;
+
 create or replace function fn_after_match_settled() returns trigger
 language plpgsql security definer set search_path = public as $$
 declare
   v_remaining int; v_rows int; v_became_completed boolean;
   v_hp uuid; v_ap uuid; v_hn text; v_an text;
 begin
-  if new.status = old.status then return new; end if;
+  -- On ne sort tôt que si vraiment rien n'a bougé. Un statut inchangé mais
+  -- un score corrigé (l'admin réécrit un match déjà validé) doit quand
+  -- même redéclencher le recalcul du tableau de coupe le cas échéant.
+  if new.status = old.status
+     and new.home_score is not distinct from old.home_score
+     and new.away_score is not distinct from old.away_score then
+    return new;
+  end if;
 
   perform fn_recompute_round_status(new.round_id);
 

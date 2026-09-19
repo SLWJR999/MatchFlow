@@ -94,11 +94,12 @@ export default async function MatchPage({ params }: { params: Promise<{ id: stri
         </Card>
       )}
 
-      {isAdmin && match.status !== "validated" && (
+      {isAdmin && (
         <div className="mt-4">
           <AdminScoreForm
             matchId={id} tournamentId={match.tournament_id}
             currentHome={match.home_score} currentAway={match.away_score}
+            alreadyValidated={match.status === "validated"}
           />
         </div>
       )}
